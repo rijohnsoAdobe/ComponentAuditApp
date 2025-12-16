@@ -155,28 +155,15 @@ if "code" in query_params and st.session_state["access_token"] is None:
 if st.session_state["access_token"] is None:
     st.info("You are not authenticated.")
     if st.button("Sign in with Adobe"):
-        state = "streamlit-aa-bulk-delete"
+        state = "streamlit-aa-bulk-delete"  # TODO: randomize for CSRF if you want
         auth_url = build_auth_url(state)
-        # Use JS redirect in same tab
-        st.write("Redirecting to Adobe login...")
-        st.components.v1.html(
-            f"""
-            <html>
-              <head>
-                <meta http-equiv="refresh" content="0; url={auth_url}" />
-              </head>
-              <body>
-                <p>If you are not redirected automatically, <a href="{auth_url}">click here</a>.</p>
-              </body>
-            </html>
-            """,
-            height=0,
-        )
+        # Redirect the browser to Adobe IMS in the SAME tab
+        js = f"window.location.href = '{auth_url}';"
+        st.markdown(f"<script>{js}</script>", unsafe_allow_html=True)
         st.stop()
     st.stop()
 else:
     st.success("Authenticated with Adobe. Token is available for this session.")
-    # Optionally, handle token expiration here with refresh_token if you see 401s later.
 
 
 # --- Main tool UI (only if authenticated) ---
