@@ -15,7 +15,10 @@ COMPANY_ID = st.secrets.get("AA_COMPANY_ID", os.getenv("AA_COMPANY_ID"))
 REDIRECT_URI = st.secrets.get("AA_REDIRECT_URI", os.getenv("AA_REDIRECT_URI"))
 
 if not CLIENT_ID or not CLIENT_SECRET or not COMPANY_ID or not REDIRECT_URI:
-    st.error("Missing required configuration for OAuth (AA_CLIENT_ID, AA_CLIENT_SECRET, AA_COMPANY_ID, AA_REDIRECT_URI).")
+    st.error(
+        "Missing required configuration for OAuth "
+        "(AA_CLIENT_ID, AA_CLIENT_SECRET, AA_COMPANY_ID, AA_REDIRECT_URI)."
+    )
     st.stop()
 
 API_KEY = CLIENT_ID
@@ -159,10 +162,9 @@ if "access_token" not in st.session_state:
 if "refresh_token" not in st.session_state:
     st.session_state["refresh_token"] = None
 
-# --- OAuth callback handling ---
-query_params = st.experimental_get_query_params()
-if "code" in query_params and st.session_state["access_token"] is None:
-    code = query_params["code"][0]
+# --- OAuth callback handling using st.query_params (new API) ---
+if "code" in st.query_params and st.session_state["access_token"] is None:
+    code = st.query_params["code"]
     st.write("Processing OAuth callback...")
     try:
         tokens = exchange_code_for_tokens(code)
@@ -170,7 +172,7 @@ if "code" in query_params and st.session_state["access_token"] is None:
         st.session_state["refresh_token"] = tokens.get("refresh_token")
         st.success("Authentication successful. You can now run deletions.")
         # Clear query params so we don't re-process the code on rerun
-        st.experimental_set_query_params()
+        st.query_params.clear()
     except Exception as e:
         st.error(f"Failed to exchange code for tokens: {e}")
         st.stop()
