@@ -47,7 +47,12 @@ def exchange_code_for_tokens(code: str) -> dict:
     }
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     resp = requests.post(IMS_TOKEN_URL, headers=headers, data=data)
-    resp.raise_for_status()
+
+    if not resp.ok:
+        # Show detailed IMS error in Streamlit logs
+        st.error(f"Token exchange failed: {resp.status_code} {resp.text}")
+        resp.raise_for_status()
+
     return resp.json()
 
 
@@ -133,17 +138,17 @@ if "refresh_token" not in st.session_state:
 
 # --- OAuth callback handling ---
 query_params = st.experimental_get_query_params()
-if "code" in query_params:
+if "code" in query_params and st.session_state["access_token"] is None:
     code = query_params["code"][0]
     try:
         tokens = exchange_code_for_tokens(code)
         st.session_state["access_token"] = tokens["access_token"]
         st.session_state["refresh_token"] = tokens.get("refresh_token")
         st.success("Authentication successful. You can now run deletions.")
-        # Clear query params so we don't re-process the code on rerun
-        st.experimental_set_query_params()
+        st.experimental_set_query_params()  # clear query string
     except Exception as e:
         st.error(f"Failed to exchange code for tokens: {e}")
+        st.stop()
 
 # --- Authentication section ---
 
