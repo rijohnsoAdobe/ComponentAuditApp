@@ -76,7 +76,7 @@ def exchange_code_for_tokens(code: str) -> dict:
 def refresh_access_token(refresh_token: str) -> dict:
     """
     Refresh the access token using a refresh token.
-    (Not wired into main flow yet, but available if needed.)
+    (Available if you want longer-lived sessions.)
     """
     data = {
         "grant_type": "refresh_token",
@@ -94,11 +94,11 @@ def refresh_access_token(refresh_token: str) -> dict:
     return resp.json()
 
 
-def call_analytics_api(method: str, access_token: str, path: str):
+def call_analytics_api(method: str, access_token: str, path: str) -> requests.Response:
     """
     Helper to call Analytics API with correct headers.
     method: 'GET' or 'DELETE'
-    path: full path, e.g. /segments/{id} or /calculatedmetrics/{id}
+    path: e.g. '/segments/{id}' or '/calculatedmetrics/{id}'
     """
     headers = {
         "accept": "application/json",
@@ -202,6 +202,7 @@ if "code" in st.query_params and st.session_state["access_token"] is None:
 
 
 # --- Authentication section ---
+
 if st.session_state["access_token"] is None:
     st.info("You are not authenticated.")
     if st.button("Sign in with Adobe"):
