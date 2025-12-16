@@ -23,7 +23,7 @@ API_KEY = CLIENT_ID
 
 IMS_AUTH_BASE = "https://ims-na1.adobelogin.com/ims/authorize/v2"
 IMS_TOKEN_URL = "https://ims-na1.adobelogin.com/ims/token/v3"
-SCOPES = "openid,AdobeID,read_apis,write_apis"
+SCOPES = "additional_info.projectedProductContext, AdobeID, read_organizations, additional_info.job_function, openid"
 
 
 def build_auth_url(state: str) -> str:
