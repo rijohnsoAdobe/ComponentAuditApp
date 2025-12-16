@@ -9,21 +9,32 @@ import pandas as pd
 import requests
 
 # --- CONFIG FROM STREAMLIT SECRETS / ENV ---
-# On Streamlit Cloud, you'll use st.secrets; locally, you can fallback to env vars.
 CLIENT_ID = st.secrets.get("AA_CLIENT_ID", os.getenv("AA_CLIENT_ID"))
 CLIENT_SECRET = st.secrets.get("AA_CLIENT_SECRET", os.getenv("AA_CLIENT_SECRET"))
 COMPANY_ID = st.secrets.get("AA_COMPANY_ID", os.getenv("AA_COMPANY_ID"))
 REDIRECT_URI = st.secrets.get("AA_REDIRECT_URI", os.getenv("AA_REDIRECT_URI"))
 
 if not CLIENT_ID or not CLIENT_SECRET or not COMPANY_ID or not REDIRECT_URI:
-    st.error("Missing required configuration for OAuth (CLIENT_ID/SECRET, COMPANY_ID, REDIRECT_URI).")
+    st.error("Missing required configuration for OAuth (AA_CLIENT_ID, AA_CLIENT_SECRET, AA_COMPANY_ID, AA_REDIRECT_URI).")
     st.stop()
 
 API_KEY = CLIENT_ID
 
 IMS_AUTH_BASE = "https://ims-na1.adobelogin.com/ims/authorize/v2"
 IMS_TOKEN_URL = "https://ims-na1.adobelogin.com/ims/token/v3"
-SCOPES = "additional_info.projectedProductContext, AdobeID, read_organizations, additional_info.job_function, openid"
+
+# IMPORTANT:
+# 1) These scopes must be enabled on the OAuth Web credential in Adobe Developer Console.
+# 2) You can add read_apis,write_apis if you also enable them there.
+SCOPES = (
+    "additional_info.projectedProductContext,"
+    "AdobeID,"
+    "read_organizations,"
+    "additional_info.job_function,"
+    "openid"
+    # If you've enabled Analytics API scopes in Dev Console, append:
+    # ",read_apis,write_apis"
+)
 
 
 def build_auth_url(state: str) -> str:
@@ -38,6 +49,10 @@ def build_auth_url(state: str) -> str:
 
 
 def exchange_code_for_tokens(code: str) -> dict:
+    """
+    Exchange authorization code for access/refresh tokens via IMS.
+    Logs the IMS error if something goes wrong.
+    """
     data = {
         "grant_type": "authorization_code",
         "client_id": CLIENT_ID,
@@ -49,7 +64,7 @@ def exchange_code_for_tokens(code: str) -> dict:
     resp = requests.post(IMS_TOKEN_URL, headers=headers, data=data)
 
     if not resp.ok:
-        # Show detailed IMS error in Streamlit logs
+        # Show detailed IMS error to help debug (redirect URI / scope / etc.)
         st.error(f"Token exchange failed: {resp.status_code} {resp.text}")
         resp.raise_for_status()
 
@@ -57,6 +72,10 @@ def exchange_code_for_tokens(code: str) -> dict:
 
 
 def refresh_access_token(refresh_token: str) -> dict:
+    """
+    Refresh the access token using a refresh token.
+    (Not wired into main flow yet, but available if needed.)
+    """
     data = {
         "grant_type": "refresh_token",
         "client_id": CLIENT_ID,
@@ -65,7 +84,11 @@ def refresh_access_token(refresh_token: str) -> dict:
     }
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     resp = requests.post(IMS_TOKEN_URL, headers=headers, data=data)
-    resp.raise_for_status()
+
+    if not resp.ok:
+        st.error(f"Refresh failed: {resp.status_code} {resp.text}")
+        resp.raise_for_status()
+
     return resp.json()
 
 
@@ -130,7 +153,7 @@ def delete_items(access_token: str, ids: list[str], item_type: str):
 st.set_page_config(page_title="Adobe Analytics Bulk Delete", layout="wide")
 st.title("Adobe Analytics Bulk Delete (Segments & Calculated Metrics)")
 
-# Keep tokens in session state
+# Session storage for tokens
 if "access_token" not in st.session_state:
     st.session_state["access_token"] = None
 if "refresh_token" not in st.session_state:
@@ -140,24 +163,26 @@ if "refresh_token" not in st.session_state:
 query_params = st.experimental_get_query_params()
 if "code" in query_params and st.session_state["access_token"] is None:
     code = query_params["code"][0]
+    st.write("Processing OAuth callback...")
     try:
         tokens = exchange_code_for_tokens(code)
         st.session_state["access_token"] = tokens["access_token"]
         st.session_state["refresh_token"] = tokens.get("refresh_token")
         st.success("Authentication successful. You can now run deletions.")
-        st.experimental_set_query_params()  # clear query string
+        # Clear query params so we don't re-process the code on rerun
+        st.experimental_set_query_params()
     except Exception as e:
         st.error(f"Failed to exchange code for tokens: {e}")
         st.stop()
+
 
 # --- Authentication section ---
 
 if st.session_state["access_token"] is None:
     st.info("You are not authenticated.")
     if st.button("Sign in with Adobe"):
-        state = "streamlit-aa-bulk-delete"
+        state = "streamlit-aa-bulk-delete"  # For production, consider randomizing for CSRF
         auth_url = build_auth_url(state)
-        # Show a clickable link; browser decides same tab/new tab
         st.markdown(
             f"[Click here to sign in with Adobe]({auth_url})",
             unsafe_allow_html=True,
@@ -165,6 +190,7 @@ if st.session_state["access_token"] is None:
     st.stop()
 else:
     st.success("Authenticated with Adobe. Token is available for this session.")
+    # If you see 401s later, you can wire in refresh_access_token() and retry logic here.
 
 
 # --- Main tool UI (only if authenticated) ---
@@ -191,7 +217,7 @@ if uploaded_file is not None:
             logs = delete_items(
                 access_token,
                 ids,
-                item_type="segments" if item_type == "Segments" else "calculatedmetrics"
+                item_type="segments" if item_type == "Segments" else "calculatedmetrics",
             )
 
             log_df = pd.DataFrame(logs)
