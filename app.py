@@ -202,20 +202,19 @@ if "code" in st.query_params and st.session_state["access_token"] is None:
 
 
 # --- Authentication section ---
-
-# --- Authentication section ---
-
 if st.session_state["access_token"] is None:
     st.info("You are not authenticated.")
     if st.button("Sign in with Adobe"):
         state = "streamlit-aa-bulk-delete"  # For production, consider randomizing for CSRF
         auth_url = build_auth_url(state)
-        st.write("Redirecting to Adobe login...")
         st.markdown(
-            f'<script>window.location.href = "{auth_url}";</script>',
+            f"[Click here to sign in with Adobe]({auth_url})",
             unsafe_allow_html=True,
         )
-        st.stop()
+        st.info(
+            "If the link opens in a new tab, complete login there, "
+            "then return to this tab with the app."
+        )
     st.stop()
 else:
     st.success("Authenticated with Adobe. Token is available for this session.")
