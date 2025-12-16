@@ -150,12 +150,12 @@ if "code" in query_params:
 if st.session_state["access_token"] is None:
     st.info("You are not authenticated.")
     if st.button("Sign in with Adobe"):
-        state = "streamlit-aa-bulk-delete"  # for basic CSRF protection you can randomize this
+        state = "streamlit-aa-bulk-delete"  # TODO: randomize for CSRF if you want
         auth_url = build_auth_url(state)
-        st.markdown(
-            f"[Click here to sign in]({auth_url})",
-            unsafe_allow_html=True
-        )
+        # Redirect the browser to Adobe IMS in the SAME tab
+        js = f"window.location.href = '{auth_url}';"
+        st.markdown(f"<script>{js}</script>", unsafe_allow_html=True)
+        st.stop()
     st.stop()
 else:
     st.success("Authenticated with Adobe. Token is available for this session.")
