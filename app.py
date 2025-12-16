@@ -94,9 +94,12 @@ def refresh_access_token(refresh_token: str) -> dict:
     return resp.json()
 
 
-def delete_items(access_token: str, ids: list[str], item_type: str):
+def process_items(access_token: str, ids: list[str], item_type: str, dry_run: bool):
     """
+    Process segments or calculated metrics.
+
     item_type: 'segments' or 'calculatedmetrics'
+    dry_run: if True, only GET to check existence/permissions; no DELETE.
     Returns a list of log dicts.
     """
     headers = {
@@ -117,13 +120,18 @@ def delete_items(access_token: str, ids: list[str], item_type: str):
         else:
             endpoint = f"https://analytics.adobe.io/api/{COMPANY_ID}/calculatedmetrics/{item_id}"
 
-        status_text.text(f"Deleting ({idx}/{total}): {endpoint}")
-        response = requests.delete(endpoint, headers=headers)
+        status_prefix = "Dry run" if dry_run else "Deleting"
+        status_text.text(f"{status_prefix} ({idx}/{total}): {endpoint}")
 
-        # Handle 429 rate limiting
-        while response.status_code == 429:
-            time.sleep(0.5)
+        if dry_run:
+            # Check existence/permissions via GET
+            response = requests.get(endpoint, headers=headers)
+        else:
+            # Real delete via DELETE (with 429 retry)
             response = requests.delete(endpoint, headers=headers)
+            while response.status_code == 429:
+                time.sleep(0.5)
+                response = requests.delete(endpoint, headers=headers)
 
         try:
             res = response.json()
@@ -137,6 +145,8 @@ def delete_items(access_token: str, ids: list[str], item_type: str):
         logs.append({
             "id": item_id,
             "type": item_type,
+            "dry_run": dry_run,
+            "method": "GET" if dry_run else "DELETE",
             "status_code": response.status_code,
             "success": success,
             "errorCode": error_code,
@@ -146,7 +156,7 @@ def delete_items(access_token: str, ids: list[str], item_type: str):
 
         progress.progress(idx / total)
 
-    status_text.text("Done.")
+    status_text.text("Dry run complete." if dry_run else "Done.")
     return logs
 
 
@@ -162,9 +172,6 @@ if "refresh_token" not in st.session_state:
     st.session_state["refresh_token"] = None
 
 # --- OAuth callback handling at ROOT using st.query_params ---
-
-# For debugging, you can temporarily uncomment:
-# st.write("DEBUG: st.query_params:", dict(st.query_params))
 
 if "code" in st.query_params and st.session_state["access_token"] is None:
     code = st.query_params["code"]
@@ -205,6 +212,13 @@ item_type = st.selectbox(
     options=["Segments", "Calculated Metrics"],
 )
 
+dry_run = st.checkbox(
+    "Dry run (preview only – no deletions)",
+    value=True,
+    help="When enabled, the tool will only check that IDs exist and are accessible, "
+         "but will NOT delete anything.",
+)
+
 uploaded_file = st.file_uploader("Upload CSV with column 'ID'", type=["csv"])
 
 if uploaded_file is not None:
@@ -215,14 +229,16 @@ if uploaded_file is not None:
         st.write("Preview of IDs:")
         st.dataframe(df.head())
 
-        if st.button("Delete Now"):
+        action_label = "Run Dry Run" if dry_run else "Delete Now"
+        if st.button(action_label):
             access_token = st.session_state["access_token"]
 
             ids = df["ID"].astype(str).tolist()
-            logs = delete_items(
+            logs = process_items(
                 access_token,
                 ids,
                 item_type="segments" if item_type == "Segments" else "calculatedmetrics",
+                dry_run=dry_run,
             )
 
             log_df = pd.DataFrame(logs)
