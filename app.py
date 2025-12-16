@@ -94,10 +94,11 @@ def refresh_access_token(refresh_token: str) -> dict:
     return resp.json()
 
 
-def delete_items(access_token: str, ids: list[str], item_type: str):
+def call_analytics_api(method: str, access_token: str, path: str):
     """
-    item_type: 'segments' or 'calculatedmetrics'
-    Returns a list of log dicts.
+    Helper to call Analytics API with correct headers.
+    method: 'GET' or 'DELETE'
+    path: full path, e.g. /segments/{id} or /calculatedmetrics/{id}
     """
     headers = {
         "accept": "application/json",
@@ -105,7 +106,22 @@ def delete_items(access_token: str, ids: list[str], item_type: str):
         "x-api-key": API_KEY,
         "x-proxy-global-company-id": COMPANY_ID,
     }
+    url = f"https://analytics.adobe.io/api/{COMPANY_ID}{path}"
 
+    if method == "GET":
+        return requests.get(url, headers=headers)
+    elif method == "DELETE":
+        return requests.delete(url, headers=headers)
+    else:
+        raise ValueError(f"Unsupported method: {method}")
+
+
+def process_items(access_token: str, ids: list[str], item_type: str, dry_run: bool):
+    """
+    item_type: 'segments' or 'calculatedmetrics'
+    dry_run: if True, only GET to check existence/permissions; no DELETE.
+    Returns a list of log dicts.
+    """
     logs = []
     total = len(ids)
     progress = st.progress(0)
@@ -113,17 +129,22 @@ def delete_items(access_token: str, ids: list[str], item_type: str):
 
     for idx, item_id in enumerate(ids, start=1):
         if item_type == "segments":
-            endpoint = f"https://analytics.adobe.io/api/{COMPANY_ID}/segments/{item_id}"
+            path = f"/segments/{item_id}"
         else:
-            endpoint = f"https://analytics.adobe.io/api/{COMPANY_ID}/calculatedmetrics/{item_id}"
+            path = f"/calculatedmetrics/{item_id}"
 
-        status_text.text(f"Deleting ({idx}/{total}): {endpoint}")
-        response = requests.delete(endpoint, headers=headers)
+        status_prefix = "Dry run" if dry_run else "Deleting"
+        status_text.text(f"{status_prefix} ({idx}/{total}): {path}")
 
-        # Handle 429 rate limiting
-        while response.status_code == 429:
-            time.sleep(0.5)
-            response = requests.delete(endpoint, headers=headers)
+        if dry_run:
+            # Check existence/permissions via GET
+            response = call_analytics_api("GET", access_token, path)
+        else:
+            # Real delete via DELETE (with 429 retry)
+            response = call_analytics_api("DELETE", access_token, path)
+            while response.status_code == 429:
+                time.sleep(0.5)
+                response = call_analytics_api("DELETE", access_token, path)
 
         try:
             res = response.json()
@@ -137,6 +158,8 @@ def delete_items(access_token: str, ids: list[str], item_type: str):
         logs.append({
             "id": item_id,
             "type": item_type,
+            "dry_run": dry_run,
+            "method": "GET" if dry_run else "DELETE",
             "status_code": response.status_code,
             "success": success,
             "errorCode": error_code,
@@ -146,7 +169,7 @@ def delete_items(access_token: str, ids: list[str], item_type: str):
 
         progress.progress(idx / total)
 
-    status_text.text("Done.")
+    status_text.text("Dry run complete." if dry_run else "Deletion complete.")
     return logs
 
 
@@ -162,9 +185,6 @@ if "refresh_token" not in st.session_state:
     st.session_state["refresh_token"] = None
 
 # --- OAuth callback handling at ROOT using st.query_params ---
-
-# For debugging, you can temporarily uncomment:
-# st.write("DEBUG: st.query_params:", dict(st.query_params))
 
 if "code" in st.query_params and st.session_state["access_token"] is None:
     code = st.query_params["code"]
@@ -188,10 +208,16 @@ if st.session_state["access_token"] is None:
     if st.button("Sign in with Adobe"):
         state = "streamlit-aa-bulk-delete"  # For production, consider randomizing for CSRF
         auth_url = build_auth_url(state)
+        st.write("Redirecting to Adobe login...")
         st.markdown(
-            f"[Click here to sign in with Adobe]({auth_url})",
+            f""
+            <script>
+            window.location.href = "{auth_url}";
+            </script>
+            "",
             unsafe_allow_html=True,
         )
+        st.stop()
     st.stop()
 else:
     st.success("Authenticated with Adobe. Token is available for this session.")
@@ -201,8 +227,15 @@ else:
 # --- Main tool UI (only if authenticated) ---
 
 item_type = st.selectbox(
-    "Type of component to delete:",
+    "Type of component to process:",
     options=["Segments", "Calculated Metrics"],
+)
+
+dry_run = st.checkbox(
+    "Dry run (preview only – no deletions)",
+    value=True,
+    help="When enabled, the tool will only check that IDs exist and are accessible, "
+         "but will NOT delete anything.",
 )
 
 uploaded_file = st.file_uploader("Upload CSV with column 'ID'", type=["csv"])
@@ -215,14 +248,16 @@ if uploaded_file is not None:
         st.write("Preview of IDs:")
         st.dataframe(df.head())
 
-        if st.button("Delete Now"):
+        action_label = "Run Dry Run" if dry_run else "Delete Now"
+        if st.button(action_label):
             access_token = st.session_state["access_token"]
 
             ids = df["ID"].astype(str).tolist()
-            logs = delete_items(
+            logs = process_items(
                 access_token,
                 ids,
                 item_type="segments" if item_type == "Segments" else "calculatedmetrics",
+                dry_run=dry_run,
             )
 
             log_df = pd.DataFrame(logs)
